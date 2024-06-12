@@ -1,0 +1,70 @@
+pipeline {
+    agent any
+
+    environment {
+        ZABBIX_API_URL = "http://0.0.0.0/api_jsonrpc.php"
+    }
+
+    stages {
+        stage('Logoff from Zabbix API') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'ZABBIX_USER', usernameVariable: 'ZABBIX_USERNAME', passwordVariable: 'ZABBIX_PASSWORD')]) {
+                        def authPayload = [
+                            jsonrpc: '2.0',
+                            method: 'user.login',
+                            params: [
+                                user: env.ZABBIX_USERNAME,
+                                password: env.ZABBIX_PASSWORD
+                            ],
+                            id: 1,
+                            auth: null
+                        ]
+
+                        def response = httpRequest(
+                            contentType: 'APPLICATION_JSON',
+                            httpMode: 'POST',
+                            requestBody: groovy.json.JsonOutput.toJson(authPayload),
+                            url: "${env.ZABBIX_API_URL}"
+                        )
+
+                        if (response.status == 200) {
+                            def authResult = readJSON(text: response.content)
+                            if (authResult.result) {
+                                def authToken = authResult.result
+                                logoff(authToken)
+                            } else {
+                                error "Authentication failed: ${authResult.error.message}"
+                            }
+                        } else {
+                            error "Failed to connect to Zabbix API: ${response.status}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+def logoff(authToken) {
+    def logoffPayload = [
+        jsonrpc: '2.0',
+        method: 'user.logout',
+        params: [],
+        auth: authToken,
+        id: 1
+    ]
+
+    def response = httpRequest(
+        contentType: 'APPLICATION_JSON',
+        httpMode: 'POST',
+        requestBody: groovy.json.JsonOutput.toJson(logoffPayload),
+        url: "${env.ZABBIX_API_URL}"
+    )
+
+    if (response.status == 200) {
+        echo "Successfully logged off from Zabbix API"
+    } else {
+        error "Failed to log off from Zabbix API: ${response.status}"
+    }
+}

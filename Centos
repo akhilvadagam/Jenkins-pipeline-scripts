@@ -1,0 +1,26 @@
+---
+- name: Check Zabbix Agent is already installed or not for CentOS
+  command: systemctl status zabbix-agent.service
+  register: service_status_agent
+  ignore_errors: True
+
+- name: Install the Zabbix-Agent on CentOS
+  yum:
+    name: /tmp/zabbix-agent-3.0.4-1.el8.x86_64.rpm  # Adjust the package name as per your requirement
+    state: present
+  when:
+    - ansible_distribution == "CentOS"
+    - ('"unrecognized service" not in service_status_agent.stdout')
+  become: yes
+
+- name: Enable the Zabbix-agent service on CentOS
+  systemd:
+    name: zabbix-agent.service
+    enabled: yes
+    state: restarted
+  when: ('"unrecognized service" not in service_status_agent.stdout')
+  become: yes
+  tags:
+    - zabbix-agent
+    - init
+    - service

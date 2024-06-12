@@ -1,0 +1,36 @@
+---
+- name: Install and configure Zabbix Agent 2 on AIX
+  hosts: all
+  tasks:
+    - name: Check if Zabbix Agent 2 is already installed
+      command: lssrc -ls zabbix-agent2
+      register: service_status_agent2
+      ignore_errors: true
+
+    - name: Copy Zabbix-Agent 2 installation file to AIX host
+      copy:
+        src: /var/lib/awx/projects/_8__ccp/roles/awx-zabbix-agent/files/zabbix-agent2-3.0.4-1.aix.x86_64.rpm
+        dest: /tmp/zabbix-agent2-3.0.4-1.aix.x86_64.rpm
+
+    - name: Install the Zabbix-Agent 2 on AIX
+      shell: rpm -i /tmp/zabbix-agent2-3.0.4-1.aix.x86_64.rpm
+      when: '"zabbix-agent2" not in service_status_agent2.stdout'
+      become: yes
+
+    - name: Start and enable the Zabbix-Agent 2 service on AIX
+      shell: |
+        startsrc -s zabbix-agent2
+        mkitab "zabbix-agent2:2:once:/usr/sbin/startsrc -s zabbix-agent2"
+      when: '"zabbix-agent2" not in service_status_agent2.stdout'
+      become: yes
+
+
+
+
+
+
+
+
+
+
+

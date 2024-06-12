@@ -1,0 +1,93 @@
+pipeline {
+    agent any
+    
+    parameters {
+        string(name: 'triggerIds', defaultValue: '', description: 'Enter the trigger ID(s) separated by comma')
+        choice(name: 'status', choices: ['0', '1'], description: 'Select status (0 for enabled, 1 for disabled)')
+    }
+
+    environment {
+        ZABBIX_API_URL = "http://0.0.0.0/api_jsonrpc.php"
+    }
+
+    stages {
+        stage('Authenticate to Zabbix API') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'ZABBIX_USER', usernameVariable: 'ZABBIX_USERNAME', passwordVariable: 'ZABBIX_PASSWORD')]) {
+                        def authPayload = [
+                            jsonrpc: '2.0',
+                            method: 'user.login',
+                            params: [
+                                user: env.ZABBIX_USERNAME,
+                                password: env.ZABBIX_PASSWORD
+                            ],
+                            id: 1,
+                            auth: null
+                        ]
+
+                        def response = httpRequest(
+                            contentType: 'APPLICATION_JSON',
+                            httpMode: 'POST',
+                            requestBody: groovy.json.JsonOutput.toJson(authPayload),
+                            url: "${env.ZABBIX_API_URL}"
+                        )
+
+                        if (response.status == 200) {
+                            def authResult = readJSON(text: response.content)
+                            if (authResult.result) {
+                                def authToken = authResult.result
+                                updateTriggers(authToken)
+                            } else {
+                                error "Authentication failed: ${authResult.error.message}"
+                            }
+                        } else {
+                            error "Failed to connect to Zabbix API: ${response.status}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+def updateTriggers(authToken) {
+    def triggerIds = params.triggerIds.split(',').collect { it.trim() }
+    if (!triggerIds) {
+        error "Trigger IDs are required"
+        return
+    }
+
+    def status = params.status.toInteger()
+
+    triggerIds.each { triggerId ->
+        def updateTriggerPayload = [
+            jsonrpc: '2.0',
+            method: 'trigger.update',
+            params: [
+                triggerid: triggerId,
+                status: status
+            ],
+            auth: authToken,
+            id: 1
+        ]
+
+        def response = httpRequest(
+            contentType: 'APPLICATION_JSON',
+            httpMode: 'POST',
+            requestBody: groovy.json.JsonOutput.toJson(updateTriggerPayload),
+            url: "${env.ZABBIX_API_URL}"
+        )
+
+        if (response.status == 200) {
+            def result = readJSON(text: response.content)
+            if (result.result) {
+                echo "Trigger ${triggerId} updated successfully"
+            } else {
+                error "Failed to update trigger ${triggerId}: ${result.error.message}"
+            }
+        } else {
+            error "Failed to update trigger ${triggerId}: ${response.status}"
+        }
+    }
+}

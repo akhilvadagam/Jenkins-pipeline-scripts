@@ -1,0 +1,105 @@
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper // Add this import statement
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Authenticate to Zabbix API') {
+            steps {
+                script {
+                    def zabbixUrl = 'http://0.0.0.0/api_jsonrpc.php'
+                    def zabbixUsername = 'apiuser'
+                    def zabbixPassword = '<api_password>'
+
+                    def authPayload = [
+                        jsonrpc: '2.0',
+                        method: 'user.login',
+                        params: [
+                            user: zabbixUsername,
+                            password: zabbixPassword
+                        ],
+                        id: 1,
+                        auth: null
+                    ]
+
+                    def response = httpRequest(
+                        contentType: 'APPLICATION_JSON',
+                        httpMode: 'POST',
+                        requestBody: JsonOutput.toJson(authPayload),
+                        url: zabbixUrl + '/api_jsonrpc.php'
+                    )
+
+                    if (response.status == 200) {
+                        def authResult = new JsonSlurper().parseText(response.content) // Use JsonSlurper here
+                        if (authResult.result) {
+                            def authToken = authResult.result
+                            println "Authentication successful. Auth token: ${authToken}"
+                            // Do further actions with authToken
+                        } else {
+                            println "Authentication failed: ${authResult.error.message}"
+                        }
+                    } else {
+                        println "Failed to connect to Zabbix API: ${response.status}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+
+-----------------------------------------------------------------------------------------------------------------
+
+
+
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper // Add this import statement
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Authenticate to Zabbix API') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'ZABBIX_USER', usernameVariable: 'ZABBIX_USERNAME', passwordVariable: 'ZABBIX_PASSWORD')]) {
+                        def zabbixUrl = 'http://your_zabbix_server_url'
+                        def authPayload = [
+                            jsonrpc: '2.0',
+                            method: 'user.login',
+                            params: [
+                                user: env.ZABBIX_USERNAME,
+                                password: env.ZABBIX_PASSWORD
+                            ],
+                            id: 1,
+                            auth: null
+                        ]
+
+                        def response = httpRequest(
+                            contentType: 'APPLICATION_JSON',
+                            httpMode: 'POST',
+                            requestBody: JsonOutput.toJson(authPayload),
+                            url: "${zabbixUrl}/api_jsonrpc.php"
+                        )
+
+                        if (response.status == 200) {
+                            def authResult = new JsonSlurper().parseText(response.content)
+                            if (authResult.result) {
+                                def authToken = authResult.result
+                                println "Authentication successful. Auth token: ${authToken}"
+                                // Do further actions with authToken
+                            } else {
+                                println "Authentication failed: ${authResult.error.message}"
+                            }
+                        } else {
+                            println "Failed to connect to Zabbix API: ${response.status}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

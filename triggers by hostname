@@ -1,0 +1,93 @@
+import groovy.json.JsonOutput
+
+pipeline {
+    agent any
+    
+    parameters {
+        string(name: 'hostname', defaultValue: '', description: 'Enter the hostname')
+    }
+
+    environment {
+        ZABBIX_API_URL = "http://0.0.0.0/api_jsonrpc.php"
+    }
+
+    
+    stages {
+        stage('Authenticate to Zabbix API') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'ZABBIX_USER', usernameVariable: 'ZABBIX_USERNAME', passwordVariable: 'ZABBIX_PASSWORD')]) {
+                        def authPayload = [
+                            jsonrpc: '2.0',
+                            method: 'user.login',
+                            params: [
+                                user: env.ZABBIX_USERNAME,
+                                password: env.ZABBIX_PASSWORD
+                            ],
+                            id: 1,
+                            auth: null
+                        ]
+
+                        def response = httpRequest(
+                            contentType: 'APPLICATION_JSON',
+                            httpMode: 'POST',
+                            requestBody: JsonOutput.toJson(authPayload),
+                            url: "${env.ZABBIX_API_URL}"
+                        )
+
+                        if (response.status == 200) {
+                            def authResult = readJSON(text: response.content)
+                            if (authResult.result) {
+                                def authToken = authResult.result
+                                echo "Authentication successful. Auth token: ${authToken}"
+                                // Retrieve the list of triggers for the given hostname
+                                def triggers = getTriggers(authToken, params.hostname)
+                                echo "Triggers for ${params.hostname}:"
+                                triggers.each { trigger ->
+                                    echo "Trigger ID: ${trigger.triggerid}, Description: ${trigger.description}, Status: ${trigger.status}"
+                                }
+                            } else {
+                                error "Authentication failed: ${authResult.error.message}"
+                            }
+                        } else {
+                            error "Failed to connect to Zabbix API: ${response.status}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+def getTriggers(authToken, hostname) {
+    def getTriggerPayload = [
+        jsonrpc: '2.0',
+        method: 'trigger.get',
+        params: [
+            output: ['triggerid', 'description', 'status'],
+            filter: [
+                host: hostname
+            ]
+        ],
+        auth: authToken,
+        id: 1
+    ]
+
+    def response = httpRequest(
+        contentType: 'APPLICATION_JSON',
+        httpMode: 'POST',
+        requestBody: JsonOutput.toJson(getTriggerPayload),
+        url: "${env.ZABBIX_API_URL}"
+    )
+
+    if (response.status == 200) {
+        def result = readJSON(text: response.content)
+        if (result.result) {
+            return result.result
+        } else {
+            error "No triggers found for ${hostname}"
+        }
+    } else {
+        error "Failed to connect to Zabbix API: ${response.status}"
+    }
+}

@@ -1,0 +1,64 @@
+import requests
+import json
+
+pipeline {
+    agent any
+    stages {
+        stage('Create User') {
+            steps {
+                script {
+                    // Zabbix API URL
+                    url = "http://zabbix-6-0-748839611.us-east-1.elb.amazonaws.com/api_jsonrpc.php"
+
+                    // Zabbix API authentication
+                    user = "apiuser"
+                    password = "zE3dSL*nnMs0Bq"
+
+                    // User to be created
+                    new_user = [
+                        "user": [
+                            "alias": "new_user",
+                            "name": "New User",
+                            "surname": "User",
+                            "userid": "",
+                            'passwd': 'new_user_password',
+                            'passwd2': 'new_user_password',
+                            'lang': 'en_US',
+                            'rcuser': '0',
+                            'usrgrps': [
+                                [
+                                    'groupid': '1' // Change this to the group ID you want to add the user to
+                                ]
+                            ]
+                        ]
+                    ]
+
+                    // Authentication
+                    auth = requests.post(url, json={"jsonrpc": "2.0", "method": "user.login", "params": [user, password], "id": 1}).json()
+
+                    // Create user
+                    result = requests.post(url, json={"jsonrpc": "2.0", "method": "user.create", "params": [new_user], "auth": auth["result"], "id": 1}).json()
+
+                    // Print result
+                    println(result)
+                }
+            }
+        }
+        stage('Delete User') {
+            steps {
+                script {
+                    // User to be deleted
+                    user_to_delete = [
+                        "userid": "USER_ID" // Change this to the user ID you want to delete
+                    ]
+
+                    // Delete user
+                    result = requests.post(url, json={"jsonrpc": "2.0", "method": "user.delete", "params": [user_to_delete], "auth": auth["result"], "id": 1}).json()
+
+                    // Print result
+                    println(result)
+                }
+            }
+        }
+    }
+}

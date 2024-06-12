@@ -1,0 +1,118 @@
+pipeline {
+    agent any
+
+    environment {
+        ZABBIX_URL = 'http://0.0.0.0/api_jsonrpc.php'
+    }
+
+    parameters {
+        string(name: 'USER_NAME', defaultValue: '', description: 'Enter user name (shortid)')
+    }
+
+    stages {
+        stage('Authenticate to Zabbix API') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'ZABBIX_USER', usernameVariable: 'ZABBIX_USERNAME', passwordVariable: 'ZABBIX_PASSWORD')]) {
+                        def authPayload = [
+                            jsonrpc: '2.0',
+                            method: 'user.login',
+                            params: [
+                                user: env.ZABBIX_USERNAME,
+                                password: env.ZABBIX_PASSWORD
+                            ],
+                            id: 1,
+                            auth: null
+                        ]
+
+                        def response = httpRequest(
+                            contentType: 'APPLICATION_JSON',
+                            httpMode: 'POST',
+                            requestBody: jsonToString(authPayload),
+                            url: "${env.ZABBIX_URL}"
+                        )
+
+                        if (response.status == 200) {
+                            def authResult = readJSON(text: response.content)
+                            if (authResult.result) {
+                                def authToken = authResult.result
+                                echo "Authentication successful. Auth token: ${authToken}"
+                                // Do further actions with authToken
+                                def userId = getUserId(authToken, params.USER_NAME)
+                                if (userId) {
+                                    deleteZabbixUser(authToken, userId)
+                                } else {
+                                    echo "User not found: ${params.USER_NAME}"
+                                }
+                            } else {
+                                echo "Authentication failed: ${authResult.error.message}"
+                            }
+                        } else {
+                            echo "Failed to connect to Zabbix API: ${response.status}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+def getUserId(authToken, userName) {
+    def payload = [
+        jsonrpc: '2.0',
+        method: 'user.get',
+        params: [
+            "output": ["userid", "username"],
+            "selectRole": "extend",
+            "username": "userName"
+        ],
+        auth: authToken,
+        id: 1
+    ]
+
+    def response = sendRequest(payload)
+    def userResult = readJSON(text: response.content)
+    if (userResult.result && userResult.result.size() > 0) {
+        return userResult.result[0].userid
+    } else {
+        return null
+    }
+}
+
+def deleteZabbixUser(authToken, userId) {
+    def payload = [
+        jsonrpc: '2.0',
+        method: 'user.delete',
+        params: [
+            userid: userId
+        ],
+        auth: authToken,
+        id: 1
+    ]
+
+    def response = sendRequest(payload)
+    def deleteResult = readJSON(text: response.content)
+    if (deleteResult.result) {
+        echo "User deleted successfully: ${userId}"
+    } else {
+        echo "Failed to delete user: ${deleteResult.error.message}"
+    }
+}
+
+def sendRequest(payload) {
+    def headers = ['Content-Type': 'application/json-rpc']
+
+    def response = httpRequest(
+        contentType: 'APPLICATION_JSON',
+        httpMode: 'POST',
+        requestBody: jsonToString(payload),
+        url: "${env.ZABBIX_URL}"
+    )
+
+    return response
+}
+
+def jsonToString(json) {
+    // Convert JSON object to string
+    return groovy.json.JsonOutput.toJson(json)
+}

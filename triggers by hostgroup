@@ -1,0 +1,156 @@
+import groovy.json.JsonOutput
+
+pipeline {
+    agent any
+    
+    parameters {
+        string(name: 'hostgroupName', defaultValue: '', description: 'Enter the host group name')
+    }
+
+    environment {
+        ZABBIX_API_URL = "http://0.0.0.0/api_jsonrpc.php"
+    }
+
+    stages {
+        stage('Authenticate to Zabbix API') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'ZABBIX_USER', usernameVariable: 'ZABBIX_USERNAME', passwordVariable: 'ZABBIX_PASSWORD')]) {
+                        def authPayload = [
+                            jsonrpc: '2.0',
+                            method: 'user.login',
+                            params: [
+                                user: env.ZABBIX_USERNAME,
+                                password: env.ZABBIX_PASSWORD
+                            ],
+                            id: 1,
+                            auth: null
+                        ]
+
+                        def response = httpRequest(
+                            contentType: 'APPLICATION_JSON',
+                            httpMode: 'POST',
+                            requestBody: JsonOutput.toJson(authPayload),
+                            url: "${env.ZABBIX_API_URL}"
+                        )
+
+                        if (response.status == 200) {
+                            def authResult = readJSON(text: response.content)
+                            if (authResult.result) {
+                                def authToken = authResult.result
+                                echo "Authentication successful. Auth token: ${authToken}"
+                                // Retrieve all hosts in the specified host group
+                                def hosts = getHostsInHostGroup(authToken, params.hostgroupName)
+                                hosts.each { host ->
+                                    echo "Host: ${host.host}, Host ID: ${host.hostid}"
+                                    // Retrieve triggers for the current host
+                                    def triggers = getTriggers(authToken, host.hostid)
+                                    echo "Triggers:"
+                                    triggers.each { trigger ->
+                                        echo "Host: ${host.host}, Trigger ID: ${trigger.triggerid}, Description: ${trigger.description}, Status: ${trigger.status}"
+                                    }
+                                }
+                            } else {
+                                error "Authentication failed: ${authResult.error.message}"
+                            }
+                        } else {
+                            error "Failed to connect to Zabbix API: ${response.status}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+def getHostsInHostGroup(authToken, hostgroupName) {
+    def getHostsPayload = [
+        jsonrpc: '2.0',
+        method: 'hostgroup.get',
+        params: [
+            output: ['groupid'],
+            filter: [
+                name: [hostgroupName]
+            ]
+        ],
+        auth: authToken,
+        id: 1
+    ]
+
+    def response = httpRequest(
+        contentType: 'APPLICATION_JSON',
+        httpMode: 'POST',
+        requestBody: JsonOutput.toJson(getHostsPayload),
+        url: "${env.ZABBIX_API_URL}"
+    )
+
+    if (response.status == 200) {
+        def result = readJSON(text: response.content)
+        if (result.result) {
+            def groupId = result.result[0].groupid
+            def getHostsInGroupPayload = [
+                jsonrpc: '2.0',
+                method: 'host.get',
+                params: [
+                    output: ['hostid', 'host'],
+                    groupids: [groupId]
+                ],
+                auth: authToken,
+                id: 1
+            ]
+
+            response = httpRequest(
+                contentType: 'APPLICATION_JSON',
+                httpMode: 'POST',
+                requestBody: JsonOutput.toJson(getHostsInGroupPayload),
+                url: "${env.ZABBIX_API_URL}"
+            )
+
+            if (response.status == 200) {
+                def hostsResult = readJSON(text: response.content)
+                if (hostsResult.result) {
+                    return hostsResult.result
+                } else {
+                    error "No hosts found in group: ${hostgroupName}"
+                }
+            } else {
+                error "Failed to connect to Zabbix API: ${response.status}"
+            }
+        } else {
+            error "No host group found with name: ${hostgroupName}"
+        }
+    } else {
+        error "Failed to connect to Zabbix API: ${response.status}"
+    }
+}
+
+def getTriggers(authToken, hostId) {
+    def getTriggerPayload = [
+        jsonrpc: '2.0',
+        method: 'trigger.get',
+        params: [
+            output: ['triggerid', 'description', 'status'],
+            hostids: [hostId]
+        ],
+        auth: authToken,
+        id: 1
+    ]
+
+    def response = httpRequest(
+        contentType: 'APPLICATION_JSON',
+        httpMode: 'POST',
+        requestBody: JsonOutput.toJson(getTriggerPayload),
+        url: "${env.ZABBIX_API_URL}"
+    )
+
+    if (response.status == 200) {
+        def result = readJSON(text: response.content)
+        if (result.result) {
+            return result.result
+        } else {
+            error "No triggers found for host ID: ${hostId}"
+        }
+    } else {
+        error "Failed to connect to Zabbix API: ${response.status}"
+    }
+}

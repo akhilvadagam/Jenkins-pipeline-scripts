@@ -1,0 +1,108 @@
+pipeline {
+    agent any
+    
+    parameters {
+        string(name: 'triggerName', defaultValue: '', description: 'Enter the name of the trigger')
+        string(name: 'expression', defaultValue: '', description: 'Enter the trigger expression')
+        string(name: 'description', defaultValue: '', description: 'Enter the description of the trigger')
+        string(name: 'priority', defaultValue: '3', description: 'Enter the priority of the trigger (1-5)')
+        string(name: 'tag1', defaultValue: '', description: 'Enter the tag name for the first tag')
+        string(name: 'value1', defaultValue: '', description: 'Enter the value for the first tag')
+        string(name: 'tag2', defaultValue: '', description: 'Enter the tag name for the second tag')
+        string(name: 'value2', defaultValue: '', description: 'Enter the value for the second tag')
+    }
+    
+    environment {
+        ZABBIX_API_URL = "http://0.0.0.0/api_jsonrpc.php"
+    }
+    
+    stages {
+        stage('Authenticate to Zabbix API') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: params.ZABBIX_USER, usernameVariable: 'ZABBIX_USERNAME', passwordVariable: 'ZABBIX_PASSWORD')]) {
+                        def authPayload = [
+                            jsonrpc: '2.0',
+                            method: 'user.login',
+                            params: [
+                                user: env.ZABBIX_USERNAME,
+                                password: env.ZABBIX_PASSWORD
+                            ],
+                            id: 1,
+                            auth: null
+                        ]
+
+                        def response = httpRequest(
+                            contentType: 'APPLICATION_JSON',
+                            httpMode: 'POST',
+                            requestBody: jsonToString(authPayload),
+                            url: "${params.ZABBIX_URL}"
+                        )
+
+                        if (response.status == 200) {
+                            def authResult = readJSON(text: response.content)
+                            if (authResult.result) {
+                                def authToken = authResult.result
+                                echo "Authentication successful. Auth token: ${authToken}"
+                                // Do further actions with authToken
+                                createZabbixTrigger(authToken)
+                            } else {
+                                error "Authentication failed: ${authResult.error.message}"
+                            }
+                        } else {
+                            error "Failed to connect to Zabbix API: ${response.status}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+def createZabbixTrigger(authToken) {
+    def triggerName = params.triggerName
+    def expression = params.expression
+    def description = params.description
+    def priority = params.priority.toInteger() ?: 3 // Default priority is 3
+    
+    def tags = [
+        [
+            tag: params.tag1,
+            value: params.value1
+        ],
+        [
+            tag: params.tag2,
+            value: params.value2
+        ]
+    ]
+    
+    def zabbixPayload = [
+        jsonrpc: '2.0',
+        method: 'trigger.create',
+        params: [
+            [
+                description: description,
+                expression: expression,
+                tags: tags
+            ]
+        ],
+        auth: authToken,
+        id: 1
+    ]
+    
+    def response = httpRequest(
+        contentType: 'APPLICATION_JSON',
+        httpMode: 'POST',
+        requestBody: groovy.json.JsonOutput.toJson(zabbixPayload),
+        url: ZABBIX_API_URL
+    )
+    
+    def jsonResponse = readJSON text: response.getContent()
+    
+    if (jsonResponse.result != null && jsonResponse.result.triggerids != null) {
+        def triggerId = jsonResponse.result.triggerids[0]
+        echo "Successfully created Zabbix trigger with ID: ${triggerId}"
+    } else {
+        error "Failed to create Zabbix trigger. Response: ${response}"
+    }
+}
